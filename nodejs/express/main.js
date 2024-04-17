@@ -24,15 +24,9 @@ const app = express();
 const tenant = process.env.ACCESSBOX_TENANT;
 const apiKey = process.env.ACCESSBOX_API_KEY;
 
-// this is to help construct the permission needed for different types of methods
-const actionsMap = {
-  GET: "read",
-  POST: "write",
-};
-
 // This middleware validates the incoming requests for the users.
 // It checks if the request has a valid JWT in the Authorization header.
-// If the JWT is valid, it will set the user's email in the request object.
+// If the JWT is valid, it will set the claims in the request object.
 app.use(async (req, res, next) => {
   const authHeader = req.headers.authorization;
   if (!authHeader) {
@@ -48,15 +42,26 @@ app.use(async (req, res, next) => {
     // REPLACE THIS WITH VERIFY IN PRODUCTION
     const claims = jose.decodeJwt(token);
 
-    // permission is the last part of the req.path and action delimeted by a dot
-    const permission = `${req.path.split("/").pop()}.${actionsMap[req.method]}`;
+    req.claims = claims;
 
-    console.log(claims, permission, req.path);
+    next();
+  } catch (err) {
+    console.log(err);
+    return res.status(401).send("Invalid token");
+  }
+});
+
+// protect is a middleware that checks if the user has the required permission
+// to access the resource. It sends a request to the AccessBox API to check
+// if the user has the required permission.
+function protect(permission) {
+  return async (req, res, next) => {
+    console.log(req.claims.sub, req.path, permission)
 
     const { data } = await axios.post(
       `https://api.accessbox.dev/v1/authorize?tenant=${tenant}`,
       {
-        identity: claims.sub,
+        identity: req.claims.sub,
         resource: req.path,
         permission: permission,
       },
@@ -67,28 +72,23 @@ app.use(async (req, res, next) => {
       }
     );
 
-    console.log(data);
-
     if (!data.allow) {
       return res.status(403).send("Forbidden");
     }
 
     next();
-  } catch (err) {
-    console.log(err);
-    return res.status(401).send("Invalid token");
-  }
-});
+  };
+}
 
 // This route is protected by the middleware above.
 // Only users with the projects.viewer role can access it.
-app.get("/projects/:projectId?", async (req, res) => {
+app.get("/projects/:projectId?", protect('projects.read'), async (req, res) => {
   res.status(200).send("OK");
 });
 
 // This route is protected by the middleware above.
 // Only users with the projects.owner role can access it.
-app.post("/projects", async (req, res) => {
+app.post("/projects", protect('projects.write'), async (req, res) => {
   res.status(200).send("OK");
 });
 
