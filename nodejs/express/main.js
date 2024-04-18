@@ -56,8 +56,6 @@ app.use(async (req, res, next) => {
 // if the user has the required permission.
 function protect(permission) {
   return async (req, res, next) => {
-    console.log(req.claims.sub, req.path, permission)
-
     const { data } = await axios.post(
       `https://api.accessbox.dev/v1/authorize?tenant=${tenant}`,
       {
@@ -81,16 +79,66 @@ function protect(permission) {
 }
 
 // This route is protected by the middleware above.
+// Only users with the projects.owner role can access it.
+app.post("/projects", protect("projects.write"), async (req, res) => {
+  res.status(200).send("OK");
+});
+
+// This route is not protected by the accessbox middleware, as it needs to return
+// the list of projects for the user. This route should only be protected by the JWT
+// parser and verifier.
+app.get(
+  "/projects",
+  async (req, res) => {
+    try {
+      const { data } = await axios.get(
+        `https://api.accessbox.dev/v1/resources?tenant=${tenant}&identity=${req.claims.sub}`,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }
+      );
+
+      res.status(200).send(data);
+    } catch (err) {
+      return res.status(500).send("Internal server error");
+    }
+  }
+)
+
+// This route is protected by the middleware above.
 // Only users with the projects.viewer role can access it.
-app.get("/projects/:projectId?", protect('projects.read'), async (req, res) => {
+app.get("/projects/:projectId?", protect("projects.read"), async (req, res) => {
   res.status(200).send("OK");
 });
 
 // This route is protected by the middleware above.
-// Only users with the projects.owner role can access it.
-app.post("/projects", protect('projects.write'), async (req, res) => {
-  res.status(200).send("OK");
-});
+// It returns the IAM information for the given project, listing all users
+// and their roles.
+app.get(
+  "/projects/:projectId/iam",
+  protect("projects.read"),
+  async (req, res) => {
+    try {
+      const { data } = await axios.get(
+        `https://api.accessbox.dev/v1/identities?tenant=${tenant}&resource=${req.path.replace(
+          "/iam",
+          ""
+        )}`,
+        {
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+          },
+        }
+      );
+
+      res.status(200).send(data);
+    } catch (err) {
+      return res.status(500).send("Internal server error");
+    }
+  }
+);
 
 // export the app so it can be used in tests
 module.exports = app;
